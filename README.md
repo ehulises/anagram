@@ -17,6 +17,13 @@ Edit `lib/gameConfig.ts` to switch modes or personalize the player name.
 
 Edit `lib/puzzles.ts` to update the anagram list and rewards.
 
+## Word Hunt Dictionary
+
+The word hunt stage downloads a large, common-usage word list at runtime to
+validate swiped words (filtered to avoid short interjections). If you need the
+experience to work fully offline, swap the dictionary URL in
+`lib/wordHunt.ts` for a local file in `public/`.
+
 ## Troubleshooting npm install (403 Forbidden)
 
 A `403` from the npm registry typically means your environment is blocked from the public registry or is pointing at a restricted registry/proxy.
