@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { gameConfig } from "@/lib/gameConfig";
 import {
   createWordHuntGrid,
@@ -47,7 +47,7 @@ export default function Home() {
   }, []);
   const totalPuzzles = puzzles.length;
   const [screen, setScreen] = useState<
-    "start" | "pong" | "hunt" | "play" | "reveal"
+    "start" | "wordle" | "puzzle" | "states" | "hunt" | "play" | "reveal"
   >("start");
   const [currentIndex, setCurrentIndex] = useState(0);
   const [scrambled, setScrambled] = useState("");
@@ -77,15 +77,36 @@ export default function Home() {
   );
   const [huntDictionaryReady, setHuntDictionaryReady] = useState(false);
   const [huntDictionaryError, setHuntDictionaryError] = useState(false);
-  const [pongTimeLeft, setPongTimeLeft] = useState(30);
-  const [pongSunk, setPongSunk] = useState<number[]>([]);
-  const [pongStatus, setPongStatus] = useState<"idle" | "hit" | "miss">("idle");
-  const [pongReloading, setPongReloading] = useState(false);
-
-  const pongRows = [1, 2, 3, 4];
-  const pongWinTarget = 6;
-  const pongSuccessRate = 0.6;
-  const pongReloadMs = 700;
+  const wordleSecret = "KELLY";
+  const wordleMaxAttempts = 6;
+  const statesGoal = gameConfig.statesPuzzle.requiredStates;
+  const stateNames: Record<string, string> = {
+    WA: "Washington",
+    OR: "Oregon",
+    TX: "Texas",
+    IL: "Illinois",
+    MA: "Massachusetts",
+    MO: "Missouri",
+    AR: "Arkansas"
+  };
+  const [wordleGuesses, setWordleGuesses] = useState<string[]>([]);
+  const [wordleInput, setWordleInput] = useState("");
+  const [wordleStatus, setWordleStatus] = useState<
+    "idle" | "invalid" | "win" | "lose"
+  >("idle");
+  const puzzleSize = gameConfig.slidingPuzzle.gridSize;
+  const [puzzleTiles, setPuzzleTiles] = useState<number[]>([]);
+  const [puzzleSolved, setPuzzleSolved] = useState(false);
+  const [statesSvg, setStatesSvg] = useState("");
+  const [statesLoading, setStatesLoading] = useState(false);
+  const [statesLoadError, setStatesLoadError] = useState(false);
+  const [selectedStates, setSelectedStates] = useState<string[]>([]);
+  const [statesSolved, setStatesSolved] = useState(false);
+  const statesMapRef = useRef<HTMLDivElement | null>(null);
+  const [finalChoice, setFinalChoice] = useState<
+    "idle" | "nope" | "yes" | "of-course"
+  >("idle");
+  const [yesHover, setYesHover] = useState(false);
 
   const puzzle = puzzles[currentIndex];
 
@@ -97,19 +118,6 @@ export default function Home() {
     setInput("");
     setStatus("idle");
   }, [puzzle]);
-
-  useEffect(() => {
-    if (screen !== "pong") {
-      return;
-    }
-    if (pongTimeLeft <= 0) {
-      return;
-    }
-    const timer = window.setInterval(() => {
-      setPongTimeLeft((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [screen, pongTimeLeft]);
 
   useEffect(() => {
     let isMounted = true;
@@ -151,12 +159,136 @@ export default function Home() {
     setHuntScore(0);
   };
 
+  const startWordle = () => {
+    setScreen("wordle");
+    setWordleGuesses([]);
+    setWordleInput("");
+    setWordleStatus("idle");
+  };
+
   const handleStart = () => {
-    setScreen("pong");
-    setPongTimeLeft(30);
-    setPongSunk([]);
-    setPongStatus("idle");
-    setPongReloading(false);
+    startStates();
+  };
+
+  const countInversions = (tiles: number[]) => {
+    const filtered = tiles.filter((value) => value !== tiles.length - 1);
+    let inversions = 0;
+    for (let i = 0; i < filtered.length; i += 1) {
+      for (let j = i + 1; j < filtered.length; j += 1) {
+        if (filtered[i] > filtered[j]) {
+          inversions += 1;
+        }
+      }
+    }
+    return inversions;
+  };
+
+  const isSolvable = (tiles: number[], size: number) => {
+    const inversions = countInversions(tiles);
+    if (size % 2 === 1) {
+      return inversions % 2 === 0;
+    }
+    const emptyIndex = tiles.indexOf(tiles.length - 1);
+    const emptyRowFromBottom = size - Math.floor(emptyIndex / size);
+    if (emptyRowFromBottom % 2 === 0) {
+      return inversions % 2 === 1;
+    }
+    return inversions % 2 === 0;
+  };
+
+  const isSolved = (tiles: number[]) =>
+    tiles.every((value, index) => value === index);
+
+  const createPuzzleTiles = (size: number) => {
+    const total = size * size;
+    const tiles = Array.from({ length: total }, (_, index) => index);
+    let shuffled = tiles.slice();
+    let attempts = 0;
+    do {
+      shuffled = tiles.slice().sort(() => Math.random() - 0.5);
+      attempts += 1;
+    } while (
+      (isSolved(shuffled) || !isSolvable(shuffled, size)) &&
+      attempts < 30
+    );
+    return shuffled;
+  };
+
+  const startPuzzle = () => {
+    setScreen("puzzle");
+    setPuzzleTiles(createPuzzleTiles(puzzleSize));
+    setPuzzleSolved(false);
+  };
+
+  const startStates = () => {
+    setScreen("states");
+    setSelectedStates([]);
+    setStatesSolved(false);
+  };
+
+  const handlePuzzleShuffle = () => {
+    setPuzzleTiles(createPuzzleTiles(puzzleSize));
+    setPuzzleSolved(false);
+  };
+
+  const handlePuzzleMove = (tileIndex: number) => {
+    if (puzzleSolved) {
+      return;
+    }
+    const emptyIndex = puzzleTiles.indexOf(puzzleTiles.length - 1);
+    if (emptyIndex < 0) {
+      return;
+    }
+    const tileRow = Math.floor(tileIndex / puzzleSize);
+    const tileCol = tileIndex % puzzleSize;
+    const emptyRow = Math.floor(emptyIndex / puzzleSize);
+    const emptyCol = emptyIndex % puzzleSize;
+    const isAdjacent =
+      (Math.abs(tileRow - emptyRow) === 1 && tileCol === emptyCol) ||
+      (Math.abs(tileCol - emptyCol) === 1 && tileRow === emptyRow);
+    if (!isAdjacent) {
+      return;
+    }
+    const updated = puzzleTiles.slice();
+    [updated[tileIndex], updated[emptyIndex]] = [
+      updated[emptyIndex],
+      updated[tileIndex]
+    ];
+    setPuzzleTiles(updated);
+    if (isSolved(updated)) {
+      setPuzzleSolved(true);
+    }
+  };
+
+  const handleStateClick = (event: React.MouseEvent<HTMLDivElement>) => {
+    const target = event.target as HTMLElement | null;
+    if (!target) {
+      return;
+    }
+    let node: HTMLElement | null = target;
+    while (node && node !== statesMapRef.current) {
+      const tag = node.tagName.toLowerCase();
+      if (tag === "path" || tag === "polygon") {
+        break;
+      }
+      node = node.parentElement;
+    }
+    if (!node || node === statesMapRef.current) {
+      return;
+    }
+    const rawId = node.getAttribute("id") ?? "";
+    const normalized =
+      normalizeStateId(rawId) ||
+      normalizeStateFromClasses(node.getAttribute("class"));
+    if (!normalized) {
+      return;
+    }
+    setSelectedStates((prev) => {
+      if (prev.includes(normalized)) {
+        return prev.filter((state) => state !== normalized);
+      }
+      return [...prev, normalized];
+    });
   };
 
   const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
@@ -194,10 +326,81 @@ export default function Home() {
   }, [screen, huntTimeLeft]);
 
   useEffect(() => {
+    if (screen !== "puzzle") {
+      return;
+    }
+    if (puzzleTiles.length > 0) {
+      return;
+    }
+    setPuzzleTiles(createPuzzleTiles(puzzleSize));
+    setPuzzleSolved(false);
+  }, [screen, puzzleTiles.length, puzzleSize]);
+
+  useEffect(() => {
+    if (screen !== "states") {
+      return;
+    }
+    if (statesSvg) {
+      return;
+    }
+    setStatesLoading(true);
+    setStatesLoadError(false);
+    fetch(gameConfig.statesPuzzle.svgSrc)
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("Failed to load map");
+        }
+        return response.text();
+      })
+      .then((svgText) => {
+        setStatesSvg(sanitizeStatesSvg(svgText));
+      })
+      .catch(() => {
+        setStatesLoadError(true);
+      })
+      .finally(() => {
+        setStatesLoading(false);
+      });
+  }, [screen, statesSvg]);
+
+  useEffect(() => {
+    const mapRoot = statesMapRef.current;
+    if (!mapRoot) {
+      return;
+    }
+    const shapes = mapRoot.querySelectorAll("path, polygon");
+    shapes.forEach((shape) => {
+      const rawId = shape.getAttribute("id") ?? "";
+      const normalized =
+        normalizeStateId(rawId) ||
+        normalizeStateFromClasses(shape.getAttribute("class"));
+      if (!normalized) {
+        shape.classList.remove("selected");
+        return;
+      }
+      if (selectedStates.includes(normalized)) {
+        shape.classList.add("selected");
+      } else {
+        shape.classList.remove("selected");
+      }
+    });
+  }, [selectedStates, statesSvg]);
+
+  useEffect(() => {
     if (huntPath.length === 0) {
       setHuntStatus("idle");
     }
   }, [huntPath]);
+
+  useEffect(() => {
+    const required = gameConfig.statesPuzzle.requiredStates.map((state) =>
+      state.toUpperCase()
+    );
+    const selected = selectedStates.map((state) => state.toUpperCase());
+    const hasAll = required.every((state) => selected.includes(state));
+    const noExtra = selected.every((state) => required.includes(state));
+    setStatesSolved(hasAll && noExtra && required.length > 0);
+  }, [selectedStates]);
 
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60)
@@ -205,6 +408,73 @@ export default function Home() {
       .padStart(2, "0");
     const remaining = (seconds % 60).toString().padStart(2, "0");
     return `${minutes}:${remaining}`;
+  };
+
+  const normalizeStateId = (rawId: string) => {
+    if (!rawId) {
+      return "";
+    }
+    const cleaned = rawId.toUpperCase();
+    if (cleaned.length === 2) {
+      return cleaned;
+    }
+    if (cleaned.includes("-")) {
+      const parts = cleaned.split("-");
+      return parts[parts.length - 1] ?? "";
+    }
+    return cleaned.slice(-2);
+  };
+
+  const normalizeStateFromClasses = (className: string | null) => {
+    if (!className) {
+      return "";
+    }
+    const match = className
+      .split(/\s+/)
+      .map((value) => value.trim().toUpperCase())
+      .find((value) => value.length === 2);
+    return match ?? "";
+  };
+
+  const sanitizeStatesSvg = (svgText: string) => {
+    let cleaned = svgText
+      .replace(/<\?xml[^>]*\?>/gi, "")
+      .replace(/<!DOCTYPE[^>]*>/gi, "");
+    const viewBoxMatch = cleaned.match(/viewBox=\"([0-9.\s-]+)\"/i);
+    if (!viewBoxMatch) {
+      const widthMatch = cleaned.match(/width=\"([0-9.]+)\"/i);
+      const heightMatch = cleaned.match(/height=\"([0-9.]+)\"/i);
+      if (widthMatch && heightMatch) {
+        const viewBox = `viewBox=\"0 0 ${widthMatch[1]} ${heightMatch[1]}\"`;
+        cleaned = cleaned.replace("<svg", `<svg ${viewBox}`);
+      }
+    }
+    const normalizedViewBox = cleaned.match(/viewBox=\"([0-9.\s-]+)\"/i);
+    if (normalizedViewBox) {
+      const parts = normalizedViewBox[1].trim().split(/\s+/).map(Number);
+      if (parts.length === 4 && parts.every((value) => Number.isFinite(value))) {
+        const [x, y, width, height] = parts;
+        const padX = width * 0.05;
+        const padY = height * 0.05;
+        const expanded = `${x - padX} ${y - padY} ${width + padX * 2} ${
+          height + padY * 2
+        }`;
+        cleaned = cleaned.replace(
+          /viewBox=\"[0-9.\s-]+\"/i,
+          `viewBox="${expanded}"`
+        );
+      }
+    }
+    cleaned = cleaned
+      .replace(/\swidth=\"[^\"]*\"/i, "")
+      .replace(/\sheight=\"[^\"]*\"/i, "");
+    if (!/preserveAspectRatio=/i.test(cleaned)) {
+      cleaned = cleaned.replace(
+        "<svg",
+        '<svg preserveAspectRatio="xMidYMid meet"'
+      );
+    }
+    return cleaned;
   };
 
   const isAdjacent = (from: WordHuntTile, to: WordHuntTile) => {
@@ -283,30 +553,78 @@ export default function Home() {
     setScreen("play");
   };
 
-  const handlePongComplete = () => {
-    startHunt();
+  const handleWordleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (wordleStatus === "win" || wordleStatus === "lose") {
+      return;
+    }
+    const guess = wordleInput.trim().toUpperCase();
+    if (guess.length !== wordleSecret.length || !/^[A-Z]+$/.test(guess)) {
+      setWordleStatus("invalid");
+      return;
+    }
+    const updated = [...wordleGuesses, guess];
+    setWordleGuesses(updated);
+    setWordleInput("");
+    if (guess === wordleSecret) {
+      setWordleStatus("win");
+      return;
+    }
+    if (updated.length >= wordleMaxAttempts) {
+      setWordleStatus("lose");
+      return;
+    }
+    setWordleStatus("idle");
   };
 
-  const handlePongShot = (cupId: number) => {
-    if (pongReloading || pongTimeLeft <= 0) {
-      return;
-    }
-    if (pongSunk.length >= pongWinTarget) {
-      return;
-    }
-    if (pongSunk.includes(cupId)) {
-      return;
-    }
-    setPongReloading(true);
-    const hit = Math.random() < pongSuccessRate;
-    setPongStatus(hit ? "hit" : "miss");
-    if (hit) {
-      setPongSunk((prev) => [...prev, cupId]);
-    }
-    window.setTimeout(() => {
-      setPongReloading(false);
-    }, pongReloadMs);
+  const handleWordleRestart = () => {
+    setWordleGuesses([]);
+    setWordleInput("");
+    setWordleStatus("idle");
   };
+
+  const getWordleFeedback = (guess: string) => {
+    const secret = wordleSecret.split("");
+    const guessLetters = guess.split("");
+    const result = Array(guessLetters.length).fill("absent");
+    const remaining: Record<string, number> = {};
+    secret.forEach((letter, index) => {
+      if (guessLetters[index] === letter) {
+        result[index] = "correct";
+      } else {
+        remaining[letter] = (remaining[letter] ?? 0) + 1;
+      }
+    });
+    guessLetters.forEach((letter, index) => {
+      if (result[index] === "correct") {
+        return;
+      }
+      if (remaining[letter]) {
+        result[index] = "present";
+        remaining[letter] -= 1;
+      }
+    });
+    return result as Array<"correct" | "present" | "absent">;
+  };
+
+  const wordleLetterStatus = useMemo(() => {
+    const status: Record<string, "correct" | "present" | "absent"> = {};
+    wordleGuesses.forEach((guess) => {
+      const feedback = getWordleFeedback(guess);
+      guess.split("").forEach((letter, index) => {
+        const state = feedback[index];
+        const current = status[letter];
+        if (current === "correct") {
+          return;
+        }
+        if (current === "present" && state === "absent") {
+          return;
+        }
+        status[letter] = state;
+      });
+    });
+    return status;
+  }, [wordleGuesses, wordleSecret]);
 
   const handleHuntDragStart = (tileId: number) => {
     if (huntTimeLeft <= 0) {
@@ -331,6 +649,19 @@ export default function Home() {
     setHuntStatus("idle");
     setHuntTimeLeft(wordHuntConfig.timerSeconds);
     setHuntScore(0);
+  };
+
+  const handleFinalReset = () => {
+    setFinalChoice("idle");
+    setYesHover(false);
+  };
+
+  const handleFinalYes = () => {
+    setFinalChoice("nope");
+  };
+
+  const handleFinalOfCourse = () => {
+    setFinalChoice("of-course");
   };
 
   const finalMessage = useMemo(() => {
@@ -368,15 +699,22 @@ export default function Home() {
               Meow, meow
             </h1>
             <p className="text-base leading-relaxed text-rose-700">
-              Hello Kelly. Sink some cups, warm up with a word hunt, then solve
-              each anagram to reveal a special message just for you.
+              Hello Kelly. Tap the states we&apos;ve visited, solve a quick Wordle,
+              rebuild a photo, warm up with a word hunt, then solve each anagram
+              to reveal a special message just for you.
             </p>
             <div className="flex flex-wrap items-center justify-center gap-3">
               <span className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-600">
                 {totalPuzzles} puzzles
               </span>
               <span className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-600">
-                30s cup toss
+                US states
+              </span>
+              <span className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-600">
+                5-letter Wordle
+              </span>
+              <span className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-600">
+                Photo puzzle
               </span>
               <span className="rounded-full bg-rose-100 px-4 py-2 text-sm font-semibold text-rose-600">
                 {formatTime(wordHuntConfig.timerSeconds)} word hunt
@@ -396,78 +734,260 @@ export default function Home() {
           </div>
         )}
 
-        {screen === "pong" && (
+        {screen === "wordle" && (
           <div className="flex w-full flex-col items-center gap-5">
             <div className="flex w-full items-center justify-between text-sm font-semibold text-rose-400">
-              <span>Cup Toss Warm-up</span>
-              <span>{formatTime(pongTimeLeft)}</span>
+              <span>Wordle Warm-up</span>
+              <span>{wordleGuesses.length} / {wordleMaxAttempts} tries</span>
             </div>
 
-            <div className="flex w-full flex-col items-center gap-2 rounded-2xl bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-600">
-              <span>
-                Cups sunk: {pongSunk.length} / {pongWinTarget}
-              </span>
-              <span>{pongReloading ? "Reloading..." : "Tap a cup to shoot"}</span>
+            <div className="grid gap-2">
+              {Array.from({ length: wordleMaxAttempts }).map((_, rowIndex) => {
+                const guess = wordleGuesses[rowIndex] ?? "";
+                const feedback = guess ? getWordleFeedback(guess) : [];
+                return (
+                  <div key={`row-${rowIndex}`} className="flex gap-2">
+                    {Array.from({ length: wordleSecret.length }).map(
+                      (_, colIndex) => {
+                        const letter = guess[colIndex] ?? "";
+                        const state = feedback[colIndex];
+                        const style =
+                          state === "correct"
+                            ? "bg-rose-500 text-white border-rose-500"
+                            : state === "present"
+                              ? "bg-amber-300 text-white border-amber-300"
+                              : guess
+                                ? "bg-rose-100 text-rose-400 border-rose-200"
+                                : "bg-white text-rose-400 border-rose-200";
+                        return (
+                          <div
+                            key={`cell-${rowIndex}-${colIndex}`}
+                            className={`flex h-12 w-12 items-center justify-center rounded-2xl border-2 text-lg font-bold uppercase ${style}`}
+                          >
+                            {letter}
+                          </div>
+                        );
+                      },
+                    )}
+                  </div>
+                );
+              })}
             </div>
+
+            {wordleStatus !== "idle" && (
+              <div className="rounded-2xl bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600">
+                {wordleStatus === "invalid" &&
+                  `Enter a ${wordleSecret.length}-letter word.`}
+                {wordleStatus === "win" && "Perfect! Ready for the puzzle."}
+                {wordleStatus === "lose" &&
+                  `Out of tries. The word was ${wordleSecret}.`}
+              </div>
+            )}
 
             <div className="flex w-full flex-col items-center gap-2">
-              {pongRows.map((row, rowIndex) => (
-                <div key={row} className="flex justify-center gap-2">
-                  {Array.from({ length: row }, (_, colIndex) => {
-                    const cupId = rowIndex * 10 + colIndex;
-                    const sunk = pongSunk.includes(cupId);
+              {["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"].map((row) => (
+                <div key={row} className="flex flex-wrap justify-center gap-2">
+                  {row.split("").map((letter) => {
+                    const state = wordleLetterStatus[letter];
+                    const style =
+                      state === "correct"
+                        ? "bg-rose-500 text-white"
+                        : state === "present"
+                          ? "bg-amber-300 text-white"
+                          : state === "absent"
+                            ? "bg-rose-100 text-rose-300"
+                            : "bg-white text-rose-500";
                     return (
-                      <button
-                        key={cupId}
-                        type="button"
-                        onClick={() => handlePongShot(cupId)}
-                        disabled={pongReloading || pongTimeLeft <= 0}
-                        className={`flex h-12 w-12 items-end justify-center rounded-full border-2 pb-1 text-sm font-bold transition ${
-                          sunk
-                            ? "border-rose-200 bg-rose-100 text-rose-300"
-                            : "border-rose-400 bg-white text-rose-500 hover:bg-rose-50"
-                        }`}
+                      <span
+                        key={letter}
+                        className={`flex h-10 w-10 items-center justify-center rounded-xl border border-rose-200 text-sm font-semibold ${style}`}
                       >
-                        {sunk ? "✓" : "●"}
-                      </button>
+                        {letter}
+                      </span>
                     );
                   })}
                 </div>
               ))}
             </div>
 
-            {pongStatus !== "idle" && (
-              <div className="rounded-2xl bg-rose-50 px-4 py-2 text-sm font-semibold text-rose-600">
-                {pongStatus === "hit" ? "Splash! Nice shot." : "Missed. Try again."}
-              </div>
+            {wordleStatus !== "win" && wordleStatus !== "lose" && (
+              <form
+                onSubmit={handleWordleSubmit}
+                className="flex w-full flex-col gap-3"
+              >
+                <input
+                  value={wordleInput}
+                  onChange={(event) => {
+                    setWordleInput(event.target.value.toUpperCase());
+                    setWordleStatus("idle");
+                  }}
+                  maxLength={wordleSecret.length}
+                  placeholder="Type your guess"
+                  className="w-full rounded-2xl border border-rose-200 bg-white px-4 py-3 text-center text-lg font-semibold text-rose-700 shadow-sm outline-none transition focus:border-rose-400"
+                />
+                <button
+                  type="submit"
+                  className="rounded-full bg-rose-500 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-rose-600"
+                >
+                  Submit guess
+                </button>
+              </form>
             )}
 
-            {pongSunk.length >= pongWinTarget && (
+            {wordleStatus === "win" && (
+              <button
+                className="rounded-full bg-rose-500 px-8 py-3 text-base font-semibold text-white shadow-lg transition hover:bg-rose-600"
+                onClick={startPuzzle}
+              >
+                Start the puzzle
+              </button>
+            )}
+
+            {wordleStatus === "lose" && (
+              <button
+                className="rounded-full bg-rose-500 px-8 py-3 text-base font-semibold text-white shadow-lg transition hover:bg-rose-600"
+                onClick={handleWordleRestart}
+              >
+                Try again
+              </button>
+            )}
+          </div>
+        )}
+
+        {screen === "puzzle" && (
+          <div className="flex w-full flex-col items-center gap-5">
+            <div className="flex w-full items-center justify-between text-sm font-semibold text-rose-400">
+              <span>Photo Puzzle</span>
+              <span>{puzzleSize}x{puzzleSize} grid</span>
+            </div>
+
+            <div className="w-full rounded-3xl bg-rose-50 p-4 shadow-inner">
+              <div
+                className="grid gap-2"
+                style={{
+                  gridTemplateColumns: `repeat(${puzzleSize}, minmax(0, 1fr))`
+                }}
+              >
+                {puzzleTiles.map((value, index) => {
+                  const isEmpty = value === puzzleTiles.length - 1;
+                  const row = Math.floor(value / puzzleSize);
+                  const col = value % puzzleSize;
+                  const positionX =
+                    puzzleSize === 1 ? 0 : (col / (puzzleSize - 1)) * 100;
+                  const positionY =
+                    puzzleSize === 1 ? 0 : (row / (puzzleSize - 1)) * 100;
+                  return (
+                    <button
+                      key={`tile-${value}-${index}`}
+                      type="button"
+                      onClick={() => handlePuzzleMove(index)}
+                      className={`aspect-square rounded-2xl border-2 transition ${
+                        isEmpty
+                          ? "border-transparent bg-transparent"
+                          : "border-rose-200 shadow-sm hover:scale-[1.01]"
+                      }`}
+                      style={
+                        isEmpty
+                          ? undefined
+                          : {
+                              backgroundImage: `url(${gameConfig.slidingPuzzle.imageSrc})`,
+                              backgroundSize: `${puzzleSize * 100}% ${
+                                puzzleSize * 100
+                              }%`,
+                              backgroundPosition: `${positionX}% ${positionY}%`
+                            }
+                      }
+                      aria-label={isEmpty ? "Empty tile" : "Puzzle tile"}
+                    />
+                  );
+                })}
+              </div>
+            </div>
+
+            {puzzleSolved ? (
               <div className="flex w-full flex-col items-center gap-3">
                 <p className="text-sm font-semibold text-rose-500">
-                  You nailed it! Ready for the word hunt.
+                  You rebuilt the photo! Ready for the word hunt.
                 </p>
                 <button
                   className="rounded-full bg-rose-500 px-8 py-3 text-base font-semibold text-white shadow-lg transition hover:bg-rose-600"
-                  onClick={handlePongComplete}
+                  onClick={startHunt}
                 >
                   Start the word hunt
                 </button>
               </div>
-            )}
-
-            {pongTimeLeft <= 0 && pongSunk.length < pongWinTarget && (
+            ) : (
               <div className="flex w-full flex-col items-center gap-3">
-                <p className="text-sm font-semibold text-rose-500">
-                  Time&apos;s up! Try again to sink {pongWinTarget} cups.
+                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-rose-300">
+                  Slide tiles to complete the picture
                 </p>
                 <button
-                  className="rounded-full bg-rose-500 px-8 py-3 text-base font-semibold text-white shadow-lg transition hover:bg-rose-600"
-                  onClick={handleStart}
+                  className="rounded-full bg-rose-100 px-6 py-2 text-sm font-semibold text-rose-600 shadow-md transition hover:bg-rose-200"
+                  onClick={handlePuzzleShuffle}
                 >
-                  Replay the cup toss
+                  Shuffle
                 </button>
               </div>
+            )}
+          </div>
+        )}
+
+        {screen === "states" && (
+          <div className="flex w-full flex-col items-center gap-5">
+            <div className="flex w-full items-center justify-between text-sm font-semibold text-rose-400">
+              <span>States We&apos;ve Been To</span>
+              <span>Tap the map</span>
+            </div>
+
+            <p className="text-sm text-rose-500">
+              Click the states we&apos;ve visited together to continue. Think
+              about it deeply.
+            </p>
+
+            <div className="w-full rounded-3xl bg-rose-50 p-4 shadow-inner">
+              {statesLoading && (
+                <p className="text-center text-sm font-semibold text-rose-400">
+                  Loading map...
+                </p>
+              )}
+              {statesLoadError && (
+                <p className="text-center text-sm font-semibold text-rose-400">
+                  Map failed to load. Make sure `public/us-states.svg` exists.
+                </p>
+              )}
+              {!statesLoading && !statesLoadError && (
+                <div
+                  ref={statesMapRef}
+                  className="usa-map"
+                  onClick={handleStateClick}
+                  role="img"
+                  aria-label="United States map with clickable states"
+                  dangerouslySetInnerHTML={{ __html: statesSvg }}
+                />
+              )}
+            </div>
+
+            <div className="flex w-full flex-wrap justify-center gap-2 text-xs font-semibold text-rose-500">
+              {selectedStates.length === 0 && (
+                <span className="text-rose-300">No states selected yet</span>
+              )}
+              {selectedStates.map((abbr) => (
+                <span
+                  key={abbr}
+                  className="rounded-full bg-rose-200 px-3 py-1 text-rose-700"
+                >
+                  {stateNames[abbr] ?? abbr}
+                </span>
+              ))}
+            </div>
+
+            {statesSolved && (
+              <button
+                className="rounded-full bg-rose-500 px-8 py-3 text-base font-semibold text-white shadow-lg transition hover:bg-rose-600"
+                onClick={startWordle}
+              >
+                Start Wordle
+              </button>
             )}
           </div>
         )}
@@ -669,13 +1189,54 @@ export default function Home() {
               {finalMessage || "Will you be my Valentine?"}
             </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row">
-              <button className="rounded-full bg-rose-500 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-rose-600">
-                Yes 💘
-              </button>
-              <button className="rounded-full bg-rose-200 px-6 py-3 text-base font-semibold text-rose-700 shadow-md transition hover:bg-rose-300">
-                Of course 💘
-              </button>
+            <div className="flex flex-col items-center gap-4">
+              <div className="flex flex-col gap-3 sm:flex-row">
+                <button
+                  className="rounded-full bg-rose-500 px-6 py-3 text-base font-semibold text-white shadow-md transition hover:bg-rose-600"
+                  onMouseEnter={() => setYesHover(true)}
+                  onMouseLeave={() => setYesHover(false)}
+                  onClick={handleFinalYes}
+                >
+                  {yesHover ? "No" : "Yes 💘"}
+                </button>
+                <button
+                  className="rounded-full bg-rose-200 px-6 py-3 text-base font-semibold text-rose-700 shadow-md transition hover:bg-rose-300"
+                  onClick={handleFinalOfCourse}
+                >
+                  Of course 💘
+                </button>
+              </div>
+
+              {finalChoice === "nope" && (
+                <div className="flex flex-col items-center gap-3">
+                  <p className="text-sm font-semibold text-rose-500">
+                    WOW, can&apos;t believe you :(
+                  </p>
+                  <button
+                    className="rounded-full bg-rose-100 px-6 py-2 text-sm font-semibold text-rose-700 shadow-md transition hover:bg-rose-200"
+                    onClick={handleFinalReset}
+                  >
+                    Choose again
+                  </button>
+                </div>
+              )}
+
+              {finalChoice === "of-course" && (
+                <div className="confetti-hearts pointer-events-none">
+                  {Array.from({ length: 20 }).map((_, index) => (
+                    <span
+                      key={`confetti-${index}`}
+                      className="confetti-heart"
+                      style={{
+                        left: `${5 + index * 4.5}%`,
+                        animationDelay: `${index * 0.08}s`
+                      }}
+                    >
+                      ❤
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
 
             <p className="text-sm text-rose-400">

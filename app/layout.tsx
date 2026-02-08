@@ -2,12 +2,12 @@ import "./globals.css";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "Valentine Anagram Surprise",
-  description: "A cute anagram game with a heartfelt reveal."
+  title: "Michelle :3",
+  description: "A cute anagram game with a heartfelt reveal.",
 };
 
 export default function RootLayout({
-  children
+  children,
 }: {
   children: React.ReactNode;
 }) {

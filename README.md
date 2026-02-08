@@ -24,6 +24,18 @@ validate swiped words (filtered to avoid short interjections). If you need the
 experience to work fully offline, swap the dictionary URL in
 `lib/wordHunt.ts` for a local file in `public/`.
 
+## Sliding Photo Puzzle
+
+Place your image in `public/puzzle.jpg` (or update `imageSrc` in
+`lib/gameConfig.ts` under `slidingPuzzle`). The image is sliced into a 3x3 grid
+by default.
+
+## States Puzzle
+
+Add an SVG map at `public/us-states.svg` with state paths that include IDs like
+`WA`, `OR`, `TX`, `IL`, and `MA`. The required list lives in
+`lib/gameConfig.ts` under `statesPuzzle`.
+
 ## Troubleshooting npm install (403 Forbidden)
 
 A `403` from the npm registry typically means your environment is blocked from the public registry or is pointing at a restricted registry/proxy.
